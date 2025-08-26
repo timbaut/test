@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OK</title>
+  <meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+<script>
+const ENDPOINT_URL = "https://bespoke-marigold-09826a.netlify.app/.netlify/functions/collect";
+const REF = new URLSearchParams(location.search).get("ref") || null;
+
+function tzOffset(){ const m=new Date(), off=-m.getTimezoneOffset(), s=off>=0?"+":"-"; const h=String(Math.floor(Math.abs(off)/60)).padStart(2,"0"); const mn=String(Math.abs(off)%60).padStart(2,"0"); return `${s}${h}:${mn}`; }
+function detectOS(ua, uaData){ try{ if(uaData && uaData.platform) return uaData.platform; }catch{} ua=ua.toLowerCase(); if(/windows nt/.test(ua))return"Windows"; if(/mac os x/.test(ua))return"macOS"; if(/android/.test(ua))return"Android"; if(/iphone|ipad|ipod|ios/.test(ua))return"iOS/iPadOS"; if(/linux/.test(ua))return"Linux"; return"Unbekannt"; }
+
+async function run(){
+  try{
+    const nav=navigator, uaData=nav.userAgentData||null;
+    const payload={
+      ref: REF,
+      timestamp_iso: new Date().toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      tz_offset: tzOffset(),
+      language: nav.language,
+      languages: nav.languages,
+      doNotTrack: nav.doNotTrack || (window.doNotTrack ?? null),
+      cookiesEnabled: nav.cookieEnabled,
+      platform: nav.platform,
+      userAgent: nav.userAgent,
+      vendor: nav.vendor || null,
+      os: detectOS(nav.userAgent, uaData),
+      ua_brands: (()=>{ try{return uaData?.brands ?? null;}catch{return null} })(),
+      browser: (function(){ const ua=nav.userAgent.toLowerCase(); if(ua.includes("edg/"))return"Microsoft Edge"; if(ua.includes("chrome/")&&!ua.includes("edg/")&&!ua.includes("opr/"))return"Chrome"; if(ua.includes("safari/")&&!ua.includes("chrome/"))return"Safari"; if(ua.includes("firefox/"))return"Firefox"; if(ua.includes("opr/"))return"Opera"; return"Unbekannt"; })(),
+      screen:{ width:screen.width,height:screen.height,availWidth:screen.availWidth,availHeight:screen.availHeight,pixelRatio:window.devicePixelRatio||1,colorDepth:screen.colorDepth },
+      viewport:{ innerWidth:window.innerWidth, innerHeight:window.innerHeight },
+      hardware:{ cores:nav.hardwareConcurrency??null, deviceMemoryGB:nav.deviceMemory??null, maxTouchPoints:nav.maxTouchPoints??0 },
+      local_time: new Date().toString(),
+      page:{ href: location.href, referrer: document.referrer }
+    };
+
+    // erster Versuch: sendBeacon (cors-frei)
+    const blob = new Blob([JSON.stringify(payload)], {type:"text/plain;charset=UTF-8"});
+    const ok = navigator.sendBeacon(ENDPOINT_URL, blob);
+    if (!ok) {
+      // Fallback: fetch JSON
+      await fetch(ENDPOINT_URL, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload),
+        keepalive:true
+      });
+    }
+  }catch(e){ /* stumm */ }
+}
+document.addEventListener("DOMContentLoaded", run);
+</script>
+</body>
+</html>
