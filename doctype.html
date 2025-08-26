@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>XSS Demo</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    input, button { padding: 6px; margin: 4px 0; }
+    .box { margin-top: 1em; padding: 1em; border: 1px solid #ccc; }
+    .unsafe { background: #fee; }
+    .safe { background: #efe; }
+  </style>
+</head>
+<body>
+  <h1>XSS Demo</h1>
+  <p>Tippe etwas ein und klicke „Suchen“.</p>
+  
+  <form id="form">
+    <input type="text" name="q" placeholder="Suchbegriff...">
+    <button type="submit">Suchen</button>
+  </form>
+
+  <div class="box unsafe">
+    <h2>❌ Unsicher (Reflected)</h2>
+    <div id="result-unsafe"></div>
+  </div>
+
+  <div class="box safe">
+    <h2>✅ Sicher (Escaped)</h2>
+    <div id="result-safe"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const resUnsafe = document.getElementById('result-unsafe');
+    const resSafe = document.getElementById('result-safe');
+
+    // Hilfsfunktion: HTML escapen
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, function(m) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);
+      });
+    }
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const q = new FormData(form).get('q');
+
+      // ❌ Unsicher: direkt in innerHTML
+      resUnsafe.innerHTML = "Ihre Suche: " + q;
+
+      // ✅ Sicher: escapen oder textContent nutzen
+      resSafe.textContent = "Ihre Suche: " + q;
+    });
+  </script>
+</body>
+</html>
