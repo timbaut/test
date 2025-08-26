@@ -1,0 +1,7 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Lokale Dev: netlify dev (Port und Redirects regelt Netlify automatisch)
